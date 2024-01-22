@@ -1,0 +1,36 @@
+app = "upwork-rust-rss-feed"
+
+primary_region = "sin"
+
+[build]
+  dockerfile = "Dockerfile.fly"
+
+[[mounts]]
+  source = "upwork_rust_rss_feed_data"
+  destination = "/data"
+
+[[services]]
+  internal_port = 8080
+  protocol = "tcp"
+
+  [[services.ports]]
+  handlers = ["http"]
+  port = 80
+
+  [[services.ports]]
+  handlers = ["tls", "http"]
+  port = 443
+
+  [[services.checks]]
+  type = "http"
+  interval = 10000 # milliseconds
+  timeout = 2000 # milliseconds
+  http_path = "/"
+  grace_period = "3s"
+  restart_limit = 5
+
+[volumes]
+  name = "upwork_rust_rss_feed_data"
+  path = "/data"
+  size_gb = 1
+  region = "sin"
