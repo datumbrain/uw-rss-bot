@@ -54,14 +54,12 @@ async fn main() {
     dotenv().ok();
     let db = get_db().await.expect("Failed to initialize database");
     let client = reqwest::Client::builder()
-    .danger_accept_invalid_certs(true)
-    .redirect(Policy::none())
-    .use_rustls_tls()
-    .build()
-    .expect("Failed to build client");
+      .danger_accept_invalid_certs(true)
+      .redirect(Policy::none())
+      .use_rustls_tls()
+      .build()
+      .expect("Failed to build client");
 
-    let slack_token = std::env::var("SLACK_TOKEN").expect("SLACK_TOKEN must be set");
-    let slack_channel = std::env::var("SLACK_CHANNEL").expect("SLACK_CHANNEL must be set");
 
     // Set up a repeating task
     tokio::spawn(async move {
@@ -87,168 +85,176 @@ async fn main() {
               },
               _ => Err(RusqliteError::QueryReturnedNoRows), // or handle other errors as needed
             }
-          }){
-            Ok(row) => Some(row),
-            Err(e) => {
-                if e == RusqliteError::QueryReturnedNoRows {
-                    // Handle the case when no rows are returned
-                    // You can put your logic here
-                    None
-                } else {
-                    // Handle other errors as needed
-                    // You can print an error message or return None
-                    println!("Error: {:?}", e);
-                    None
+              }){
+                Ok(row) => Some(row),
+                Err(e) => {
+                    if e == RusqliteError::QueryReturnedNoRows {
+                        // Handle the case when no rows are returned
+                        // You can put your logic here
+                        None
+                    } else {
+                        // Handle other errors as needed
+                        // You can print an error message or return None
+                        println!("Error: {:?}", e);
+                        None
+                    }
                 }
-            }
-        };
-
-          for rss_items in rss_items {
-            // parse pubDate of rss_item into DateTime<Utc>
-            let pub_date = DateTime::parse_from_rfc2822(&rss_items.pubDate).expect("Failed to parse pub_date");
-            // println!( "pub_date: {:?}", pub_date);
+            };
 
             if let Some(ref row) = row_result {
-              if (pub_date > row.1) {
-                // println!( "rss_items: {:?}", rss_items.content);
-                let rss_item_json = serde_json::to_string(&rss_items).expect("Failed to serialize rss_item");
-                // println!( "rss_item_json: {:?}", rss_item_json);
-                // let content_snippet = "We're looking for a visionary Front-End Developer... [rest of the string]";
+              let slack_channel = std::env::var("SLACK_CHANNEL").expect("SLACK_CHANNEL must be set");
+              for rss_item in rss_items {
+                let pub_date = DateTime::parse_from_rfc2822(&rss_item.pubDate).expect("Failed to parse pub_date");
+                if pub_date > row.1 {
+                  // println!( "rss_items: {:?}", rss_items.content);
+                  let rss_item_json = serde_json::to_string(&rss_item).expect("Failed to serialize rss_item");
+                  // println!( "rss_item_json: {:?}", rss_item_json);
+                  // let content_snippet = "We're looking for a visionary Front-End Developer... [rest of the string]";
 
-                match db.execute(
-                    "INSERT INTO feed (guid, pub_date, data) VALUES (?1, ?2, ?3)",
-                    params![&rss_items.guid, &pub_date.to_rfc3339(), &rss_item_json],
-                ) {
-                    Ok(_) => println!("Inserted {}", &rss_items.guid),
-                    Err(e) => println!("Failed to insert {}: {}", &rss_items.guid, e),
-                }
-                // Create a Regex object
-                // let re = Regex::new(r"Posted On</b>: ([\w\s,:]+) UTC").unwrap();
-            
-                // Perform the match
-                let summary = Regex::new(r"(?s)(.*?)<b>Hourly Range</b>:").unwrap().captures(&rss_items.contentSnippet)
+                  let success = match db.execute(
+                      "INSERT INTO feed (guid, pub_date, data) VALUES (?1, ?2, ?3)",
+                      params![&rss_item.guid, &pub_date.to_rfc3339(), &rss_item_json],
+                  ) {
+                      Ok(_) =>{
+                        println!("Inserted {}", &rss_item.guid);
+                        true
+                      },
+                      Err(e) => {
+                        println!("Failed to insert {}: {}", &rss_item.guid, e);
+                        false
+                      }
+                  };
+                  if !success {
+                    continue;
+                  }
+                  // Create a Regex object
+                  // let re = Regex::new(r"Posted On</b>: ([\w\s,:]+) UTC").unwrap();
+              
+                  // Perform the match
+                  let summary = Regex::new(r"(?s)(.*?)<b>Hourly Range</b>:").unwrap().captures(&rss_item.contentSnippet)
+                      .and_then(|caps| caps.get(1))
+                      .map_or_else(|| "", |m| m.as_str());
+                  let summary = Regex::new(r"<br />").unwrap().replace_all(&summary, "\n");
+                  let hourly_range = Regex::new(r"<b>Hourly Range</b>:\s*([^\n<]+)").unwrap().captures(&rss_item.contentSnippet)
                     .and_then(|caps| caps.get(1))
                     .map_or_else(|| "", |m| m.as_str());
-                let summary = Regex::new(r"<br />").unwrap().replace_all(&summary, "\n");
-                let hourly_range = Regex::new(r"<b>Hourly Range</b>:\s*([^\n<]+)").unwrap().captures(&rss_items.contentSnippet)
-                  .and_then(|caps| caps.get(1))
-                  .map_or_else(|| "", |m| m.as_str());
-                let location = Regex::new(r"<b>Country</b>:\s*([^\n<]+)").unwrap().captures(&rss_items.contentSnippet)
-                  .and_then(|caps| caps.get(1))
-                  .map_or_else(|| "", |m| m.as_str());
-                let category = Regex::new(r"<b>Category</b>:\s*([^\n<]+)").unwrap().captures(&rss_items.contentSnippet)
-                  .and_then(|caps| caps.get(1))
-                  .map_or_else(|| "", |m| m.as_str());
-                // println!( "location: {:?}", category);
-                // join skills
-                let skills_string: String = Regex::new(r"<b>Skills</b>:\s*([^<]+)")
-                    .unwrap()
-                    .captures(&rss_items.contentSnippet)
-                    .and_then(|caps| caps.get(1).map(|skills_match| skills_match.as_str()))
-                    .map_or_else(|| "".to_string(), |skills_str| {
-                        let skills: Vec<&str> = skills_str.split(',').map(|s| s.trim()).collect();
-                        skills.join(", ").to_string()
-                    });
+                  let location = Regex::new(r"<b>Country</b>:\s*([^\n<]+)").unwrap().captures(&rss_item.contentSnippet)
+                    .and_then(|caps| caps.get(1))
+                    .map_or_else(|| "", |m| m.as_str());
+                  let category = Regex::new(r"<b>Category</b>:\s*([^\n<]+)").unwrap().captures(&rss_item.contentSnippet)
+                    .and_then(|caps| caps.get(1))
+                    .map_or_else(|| "", |m| m.as_str());
+                  // println!( "location: {:?}", category);
+                  // join skills
+                  let skills_string: String = Regex::new(r"<b>Skills</b>:\s*([^<]+)")
+                      .unwrap()
+                      .captures(&rss_item.contentSnippet)
+                      .and_then(|caps| caps.get(1).map(|skills_match| skills_match.as_str()))
+                      .map_or_else(|| "".to_string(), |skills_str| {
+                          let skills: Vec<&str> = skills_str.split(',').map(|s| s.trim()).collect();
+                          skills.join(", ").to_string()
+                      });
 
-                // Convert the skills_string to &str only when necessary
-                let skills: &str = &skills_string;
+                  // Convert the skills_string to &str only when necessary
+                  let skills: &str = &skills_string;
 
-                let utc_date = DateTime::parse_from_str(&format!("{}", &rss_items.pubDate), "%a, %d %b %Y %H:%M:%S %z").expect("Failed to parse posted_on").with_timezone(&Utc);
-          
-                // Convert to Eastern Time
-                let est_date = utc_date.with_timezone(&Ho_Chi_Minh).format("%a, %d %b %Y %H:%M:%S").to_string();
-                
-                let message_body = json!({
-                    "channel": &slack_channel,
-                    "blocks": [
-                      {
-                        "type": "divider"
-                      },
-                      {
-                        "type": "section",
-                        "text": {
-                          "type": "mrkdwn",
-                          "text": format!("*{}*", &rss_items.title),
+                  let utc_date = DateTime::parse_from_str(&format!("{}", &rss_item.pubDate), "%a, %d %b %Y %H:%M:%S %z").expect("Failed to parse posted_on").with_timezone(&Utc);
+            
+                  // Convert to Eastern Time
+                  let est_date = utc_date.with_timezone(&Ho_Chi_Minh).format("%a, %d %b %Y %H:%M:%S").to_string();
+                  
+                  let message_body = json!({
+                      "channel": &slack_channel,
+                      "blocks": [
+                        {
+                          "type": "divider"
                         },
-                      },
-                      {
-                        "type": "section",
-                        "text": {
-                          "type": "mrkdwn",
-                          "text": decode_html_entities(&summary),
+                        {
+                          "type": "section",
+                          "text": {
+                            "type": "mrkdwn",
+                            "text": format!("*{}*", &rss_item.title),
+                          },
                         },
-                      },
-                      {
-                        "type": "section",
-                        "fields": [
-                          {
+                        {
+                          "type": "section",
+                          "text": {
                             "type": "mrkdwn",
-                            "text": format!("*Posted On*: \n{}", &est_date),
+                            "text": decode_html_entities(&summary),
                           },
-                          {
-                            "type": "mrkdwn",
-                            "text": format!("*Hourly Range*: \n{}", &hourly_range),
-                          },
-                          {
-                            "type": "mrkdwn",
-                            "text": format!("*Location*: \n{}", &location),
-                          },
-                          {
-                            "type": "mrkdwn",
-                            "text": format!("*Category*: \n{}", &category),
-                          },
-                        ],
-                      },
-                      {
-                        "type": "divider",
-                      },
-                      {
-                        "type": "section",
-                        "text": {
-                          "type": "mrkdwn",
-                          "text": "*Key Skills Required:*\n",
                         },
-                      },
-                      {
-                        "type": "section",
-                        "text": {
-                          "type": "mrkdwn",
-                          "text": &skills
-                        },
-                      },
-                      {
-                        "type": "actions",
-                        "elements": [
-                          {
-                            "type": "button",
-                            "text": {
-                              "type": "plain_text",
-                              "text": "Apply Now",
+                        {
+                          "type": "section",
+                          "fields": [
+                            {
+                              "type": "mrkdwn",
+                              "text": format!("*Posted On*: \n{}", &est_date),
                             },
-                            "url": &rss_items.guid,
-                            "style": "primary",
+                            {
+                              "type": "mrkdwn",
+                              "text": format!("*Hourly Range*: \n{}", &hourly_range),
+                            },
+                            {
+                              "type": "mrkdwn",
+                              "text": format!("*Location*: \n{}", &location),
+                            },
+                            {
+                              "type": "mrkdwn",
+                              "text": format!("*Category*: \n{}", &category),
+                            },
+                          ],
+                        },
+                        {
+                          "type": "divider",
+                        },
+                        {
+                          "type": "section",
+                          "text": {
+                            "type": "mrkdwn",
+                            "text": "*Key Skills Required:*\n",
                           },
-                        ],
-                      },
-                    ]
-                });
-                println!("sending to slack: {:?}", &rss_items.title);
-                let slack_token = format!("Bearer {}", slack_token);
-                post_message(&client, &slack_token, &message_body);
+                        },
+                        {
+                          "type": "section",
+                          "text": {
+                            "type": "mrkdwn",
+                            "text": &skills
+                          },
+                        },
+                        {
+                          "type": "actions",
+                          "elements": [
+                            {
+                              "type": "button",
+                              "text": {
+                                "type": "plain_text",
+                                "text": "Apply Now",
+                              },
+                              "url": &rss_item.guid,
+                              "style": "primary",
+                            },
+                          ],
+                        },
+                      ]
+                  });
+                  println!("sending to slack: {:?}", &rss_item.title);
+                  post_message(&client, &message_body);
 
-                break;
+                }
               }
             } else {
-                let rss_item_json = serde_json::to_string(&rss_items).expect("Failed to serialize rss_item");
+              for rss_item in rss_items {
+                let rss_item_json = serde_json::to_string(&rss_item).expect("Failed to serialize rss_item");
+                let pub_date = DateTime::parse_from_rfc2822(&rss_item.pubDate).expect("Failed to parse pub_date");
                 match db.execute(
                     "INSERT INTO feed (guid, pub_date, data) VALUES (?1, ?2, ?3)",
-                    params![&rss_items.guid, &pub_date.to_rfc3339(), &rss_item_json],
+                    params![&rss_item.guid, &pub_date.to_rfc3339(), &rss_item_json],
                 ) {
-                    Ok(_) => println!("Inserted {}", &rss_items.guid),
-                    Err(e) => println!("Failed to insert {}: {}", &rss_items.guid, e),
+                    Ok(_) => println!("Inserted {}", &rss_item.guid),
+                    Err(e) => println!("Failed to insert {}: {}", &rss_item.guid, e),
                 }
+              }
             }
-          }
         }
     });
 
@@ -288,7 +294,7 @@ async fn setup_db(db: &Connection) -> Result<()> {
               id INTEGER PRIMARY KEY AUTOINCREMENT,
               data TEXT,
               pub_date TIMESTAMP,
-              guid TEXT,
+              guid NOT NULL UNIQUE,
               created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
           )",
           params![],
@@ -322,15 +328,17 @@ async fn read_rss_feed() -> Result<Vec<RssItem>, Box<dyn Error>> {
   Ok(items)
 }
 
-fn post_message(client: &Client, token: &str, message_body: &Value) {
+fn post_message(client: &Client, message_body: &Value) {
   let is_debug = dotenv::var("DEBUG").unwrap_or_default() == "true";
   if is_debug {
     println!("Message body: {:?}", message_body);
     return;
   }
+  let mut slack_token = std::env::var("SLACK_TOKEN").expect("SLACK_TOKEN must be set");
+  slack_token = format!("Bearer {}", &slack_token);
   
   let request = client.post("https://slack.com/api/chat.postMessage")
-      .header(header::AUTHORIZATION, token)
+      .header(header::AUTHORIZATION, slack_token)
       .header(header::CONTENT_TYPE, "application/json")
       .json(message_body)
       .send();
