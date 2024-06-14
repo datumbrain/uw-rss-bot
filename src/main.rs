@@ -6,12 +6,12 @@ use rss::Channel;
 use serde::{Deserialize, Serialize};
 use tokio::time::{self, Duration};
 use rusqlite::{params, Connection, Result};
-use chrono::{DateTime, FixedOffset, Utc, NaiveDateTime};
+use chrono::{DateTime, Utc};
 use rusqlite::Error as RusqliteError;
 use regex::Regex;
 use reqwest::header;
 use serde_json::json;
-use reqwest::{Client, RequestBuilder, Response, Error as ReqwestError};
+use reqwest::Client;
 use serde_json::Value;
 use chrono_tz::Asia::Ho_Chi_Minh; 
 use html_escape::decode_html_entities;
@@ -21,15 +21,15 @@ use reqwest::redirect::Policy;
 struct RssItem {
     title: String,
     link: String,
-    pubDate: String,
+    pub_date: String,
     #[serde(rename = "content:encoded")]
     content_encoded: String,
     #[serde(rename = "content:encodedSnippet")]
     content_encoded_snippet: String,
     content: String,
-    contentSnippet: String,
+    content_snippet: String,
     guid: String,
-    isoDate: String,
+    iso_date: String,
 }
 impl Clone for RssItem {
   fn clone(&self) -> Self {
@@ -40,10 +40,10 @@ impl Clone for RssItem {
         content_encoded: self.content_encoded.clone(),
         content_encoded_snippet: self.content_encoded_snippet.clone(),
         content: self.content.clone(),
-        contentSnippet: self.contentSnippet.clone(),
+        content_snippet: self.content_snippet.clone(),
         guid: self.guid.clone(),
-        isoDate: self.isoDate.clone(),
-        pubDate: self.pubDate.clone(),
+        iso_date: self.iso_date.clone(),
+        pub_date: self.pub_date.clone(),
       }
   }
 }
@@ -104,7 +104,7 @@ async fn main() {
             if let Some(ref row) = row_result {
               let slack_channel = std::env::var("SLACK_CHANNEL").expect("SLACK_CHANNEL must be set");
               for rss_item in rss_items {
-                let pub_date = DateTime::parse_from_rfc2822(&rss_item.pubDate).expect("Failed to parse pub_date");
+                let pub_date = DateTime::parse_from_rfc2822(&rss_item.pub_date).expect("Failed to parse pub_date");
                 if pub_date > row.1 {
                   // println!( "rss_items: {:?}", rss_items.content);
                   let rss_item_json = serde_json::to_string(&rss_item).expect("Failed to serialize rss_item");
@@ -131,24 +131,24 @@ async fn main() {
                   // let re = Regex::new(r"Posted On</b>: ([\w\s,:]+) UTC").unwrap();
               
                   // Perform the match
-                  let summary = Regex::new(r"(?s)(.*?)<b>Hourly Range</b>:").unwrap().captures(&rss_item.contentSnippet)
+                  let summary = Regex::new(r"(?s)(.*?)<b>Hourly Range</b>:").unwrap().captures(&rss_item.content_snippet)
                       .and_then(|caps| caps.get(1))
                       .map_or_else(|| "", |m| m.as_str());
                   let summary = Regex::new(r"<br />").unwrap().replace_all(&summary, "\n");
-                  let hourly_range = Regex::new(r"<b>Hourly Range</b>:\s*([^\n<]+)").unwrap().captures(&rss_item.contentSnippet)
+                  let hourly_range = Regex::new(r"<b>Hourly Range</b>:\s*([^\n<]+)").unwrap().captures(&rss_item.content_snippet)
                     .and_then(|caps| caps.get(1))
                     .map_or_else(|| "", |m| m.as_str());
-                  let location = Regex::new(r"<b>Country</b>:\s*([^\n<]+)").unwrap().captures(&rss_item.contentSnippet)
+                  let location = Regex::new(r"<b>Country</b>:\s*([^\n<]+)").unwrap().captures(&rss_item.content_snippet)
                     .and_then(|caps| caps.get(1))
                     .map_or_else(|| "", |m| m.as_str());
-                  let category = Regex::new(r"<b>Category</b>:\s*([^\n<]+)").unwrap().captures(&rss_item.contentSnippet)
+                  let category = Regex::new(r"<b>Category</b>:\s*([^\n<]+)").unwrap().captures(&rss_item.content_snippet)
                     .and_then(|caps| caps.get(1))
                     .map_or_else(|| "", |m| m.as_str());
                   // println!( "location: {:?}", category);
                   // join skills
                   let skills_string: String = Regex::new(r"<b>Skills</b>:\s*([^<]+)")
                       .unwrap()
-                      .captures(&rss_item.contentSnippet)
+                      .captures(&rss_item.content_snippet)
                       .and_then(|caps| caps.get(1).map(|skills_match| skills_match.as_str()))
                       .map_or_else(|| "".to_string(), |skills_str| {
                           let skills: Vec<&str> = skills_str.split(',').map(|s| s.trim()).collect();
@@ -158,7 +158,7 @@ async fn main() {
                   // Convert the skills_string to &str only when necessary
                   let skills: &str = &skills_string;
 
-                  let utc_date = DateTime::parse_from_str(&format!("{}", &rss_item.pubDate), "%a, %d %b %Y %H:%M:%S %z").expect("Failed to parse posted_on").with_timezone(&Utc);
+                  let utc_date = DateTime::parse_from_str(&format!("{}", &rss_item.pub_date), "%a, %d %b %Y %H:%M:%S %z").expect("Failed to parse posted_on").with_timezone(&Utc);
             
                   // Convert to Eastern Time
                   let est_date = utc_date.with_timezone(&Ho_Chi_Minh).format("%a, %d %b %Y %H:%M:%S").to_string();
@@ -245,7 +245,7 @@ async fn main() {
             } else {
               for rss_item in rss_items {
                 let rss_item_json = serde_json::to_string(&rss_item).expect("Failed to serialize rss_item");
-                let pub_date = DateTime::parse_from_rfc2822(&rss_item.pubDate).expect("Failed to parse pub_date");
+                let pub_date = DateTime::parse_from_rfc2822(&rss_item.pub_date).expect("Failed to parse pub_date");
                 match db.execute(
                     "INSERT INTO feed (guid, pub_date, data) VALUES (?1, ?2, ?3)",
                     params![&rss_item.guid, &pub_date.to_rfc3339(), &rss_item_json],
@@ -313,16 +313,16 @@ async fn read_rss_feed() -> Result<Vec<RssItem>, Box<dyn Error>> {
   let items = channel.items().iter().map(|item| RssItem {
     title: item.title().unwrap_or_default().to_string(),
     link: item.link().unwrap_or_default().to_string(),
-    pubDate: item.pub_date().unwrap_or_default().to_string(),
+    pub_date: item.pub_date().unwrap_or_default().to_string(),
     content_encoded: item.content().unwrap_or_default().to_string(),
     content_encoded_snippet: item.content().unwrap_or_default().to_string(),
     content: item.content().unwrap_or_default().to_string(),
-    contentSnippet: item.content().unwrap_or_default().to_string(),
+    content_snippet: item.content().unwrap_or_default().to_string(),
     guid: match item.guid() {
         Some(g) => g.value().to_string(),
         None => String::new(), // or any default String value you prefer
     },
-    isoDate: item.pub_date().unwrap_or_default().to_string(),   
+    iso_date: item.pub_date().unwrap_or_default().to_string(),   
   }).collect::<Vec<RssItem>>();
 
   Ok(items)
